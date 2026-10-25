@@ -1,0 +1,102 @@
+# Builds and publishes a release whenever the version in FriendListCleanup.csproj changes.
+#
+# How to release: raise <Version> in FriendListCleanup/FriendListCleanup.csproj, then Commit All and Push in Visual Studio.
+# This workflow then, on GitHub's own machines:
+#   1. builds the plugin in Release mode,
+#   2. publishes a GitHub release tagged v<version> with latest.zip attached,
+#   3. updates repo.json (version, description, etc. taken from the built plugin) so testers' Dalamud sees the update.
+# Step 3 is a commit made by the workflow, so Pull in Visual Studio before your next change.
+# Pushes where the version didn't change (an existing v<version> tag) are skipped.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$proj = Get-Content FriendListCleanup/FriendListCleanup.csproj
+          $version = @($proj.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ })[0]
+          if (-not $version) { throw "No <Version> found in the .csproj" }
+          $tag = "v$version"
+          git rev-parse -q --verify "refs/tags/$tag" | Out-Null
+          $exists = $LASTEXITCODE -eq 0
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "skip=$($exists.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($exists) { Write-Host "$tag is already released; nothing to do." } else { Write-Host "Releasing $tag." }
+          $global:LASTEXITCODE = 0 # a missing tag is the normal case, not a failure
+
+      - name: Set up .NET
+        if: steps.version.outputs.skip == 'false'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Dalamud
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: |
+          $dest = "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile dalamud.zip
+          Expand-Archive -Force dalamud.zip $dest
+          "DALAMUD_HOME=$dest\" >> $env:GITHUB_ENV
+
+      - name: Build
+        if: steps.version.outputs.skip == 'false'
+        run: dotnet build FriendListCleanup/FriendListCleanup.csproj -c Release
+
+      - name: Publish release
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-ChildItem -Recurse -Path FriendListCleanup/bin -Filter latest.zip | Select-Object -First 1
+          if (-not $zip) { throw "latest.zip wasn't produced by the build" }
+          gh release create "${{ steps.version.outputs.tag }}" $zip.FullName `
+            --title "${{ steps.version.outputs.tag }}" --generate-notes --latest
+
+      - name: Update repo.json
+        if: steps.version.outputs.skip == 'false'
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Recurse -Path FriendListCleanup/bin -Filter latest.zip | Select-Object -First 1
+          $manifest = Get-Content (Join-Path $zip.DirectoryName "FriendListCleanup.json") -Raw | ConvertFrom-Json
+          $repo = @(Get-Content repo.json -Raw | ConvertFrom-Json)
+          $entry = $repo[0]
+          foreach ($field in 'Author','Name','Punchline','Description','Tags','DalamudApiLevel','ApplicableVersion') {
+            if ($null -ne $manifest.$field) { $entry.$field = $manifest.$field }
+          }
+          $entry.AssemblyVersion = "${{ steps.version.outputs.version }}"
+          $entry.TestingAssemblyVersion = "${{ steps.version.outputs.version }}"
+          ConvertTo-Json -InputObject $repo -Depth 5 | Set-Content repo.json -Encoding utf8NoBOM
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repo.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "repo.json: ${{ steps.version.outputs.tag }} [skip ci]"
+            git push
+          }

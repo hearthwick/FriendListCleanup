@@ -32,10 +32,8 @@ Updates arrive through Dalamud like any other plugin.
 ## Releasing a new version
 
 1. Raise `<Version>` in `FriendListCleanup/FriendListCleanup.csproj` (for example 0.1.0.0 → 0.1.1.0).
-2. Switch Visual Studio to **Release** and build. The package lands in
-   `FriendListCleanup\bin\x64\Release\FriendListCleanup\latest.zip`.
-3. Set `AssemblyVersion` and `TestingAssemblyVersion` in `repo.json` to the same version.
-4. Commit and push.
-5. On GitHub: Releases → Draft a new release → tag `v0.1.1` → attach `latest.zip` → Publish.
+2. In Visual Studio: Git Changes → Commit All → Push.
 
-Dalamud compares the version in `repo.json` with what testers have installed, and downloads `latest.zip` from the newest release.
+GitHub then builds the plugin, publishes release `v0.1.1.0` with `latest.zip`, and updates `repo.json` so testers get the update
+(see `.github/workflows/release.yml`; progress shows under the repo's **Actions** tab).
+Because that last step is a commit made on GitHub, **Pull** in Visual Studio before your next change.
