@@ -123,6 +123,13 @@ public sealed class Scanner : IDisposable
             }
 
             current = ids;
+
+            // Remember the count for the friend count warning, which needs it before the game loads the list next session.
+            if (ids.Count > 0 && config.LastKnownFriendCount != ids.Count)
+            {
+                config.LastKnownFriendCount = ids.Count;
+                config.Save();
+            }
         }
     }
 

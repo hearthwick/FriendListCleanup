@@ -71,5 +71,32 @@ public sealed class ConfigWindow : Window
             config.Save();
         }
         ImGui.TextDisabled("Friends you added more recently than this are never flagged.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var warn = config.ShowServerBarWarning;
+        if (ImGui.Checkbox("Warn in the server info bar when my friend list is nearly full", ref warn))
+        {
+            config.ShowServerBarWarning = warn;
+            config.Save();
+        }
+
+        var warnAt = config.WarnAtFriends;
+        if (ImGui.InputInt("Warn at (friends)", ref warnAt, 5))
+        {
+            config.WarnAtFriends = Math.Clamp(warnAt, 1, 200);
+            config.Save();
+        }
+        ImGui.TextDisabled($"Nothing shows in the bar until you have at least this many friends (you have {config.LastKnownFriendCount}/200).\nClick the warning to open Friend List Cleanup.");
+
+        ImGui.Spacing();
+        var button = config.ShowFriendListButton;
+        if (ImGui.Checkbox("Show an FLC button next to the game's Friend List", ref button))
+        {
+            config.ShowFriendListButton = button;
+            config.Save();
+        }
     }
 }

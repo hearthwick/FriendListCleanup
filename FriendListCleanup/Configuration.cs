@@ -37,6 +37,21 @@ public class Configuration : IPluginConfiguration
     /// <summary>Friends added within this many days are labelled "New friend" and never flagged.</summary>
     public int NewFriendDays { get; set; } = 90;
 
+    /// <summary>Show a warning in the server info bar once you have at least this many friends (the cap is 200).</summary>
+    public int WarnAtFriends { get; set; } = 190;
+
+    /// <summary>Show the server info bar warning at all. It only ever appears when you're at or above WarnAtFriends.</summary>
+    public bool ShowServerBarWarning { get; set; } = true;
+
+    /// <summary>Show a small button next to the game's Friend List window that opens this plugin.</summary>
+    public bool ShowFriendListButton { get; set; } = true;
+
+    /// <summary>
+    /// How many friends you had the last time the game's friend list was loaded. The game only loads the list once
+    /// you open it, so the warning uses this saved count until then.
+    /// </summary>
+    public int LastKnownFriendCount { get; set; }
+
     /// <summary>When the last scan finished (UTC).</summary>
     public DateTime? LastScanUtc { get; set; }
 

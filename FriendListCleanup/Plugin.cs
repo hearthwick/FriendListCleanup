@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IContextMenu ContextMenu { get; private set; } = null!;
     [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
+    [PluginService] internal static IDtrBar DtrBar { get; private set; } = null!;
 
     private const string ShortCommand = "/flc";
     private const string LongCommand = "/flcleanup";
@@ -34,6 +35,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ConfigWindow configWindow;
     private readonly ExploreWindow exploreWindow;
     private readonly FriendContextMenu friendContextMenu;
+    private readonly FriendCountWarning friendCountWarning;
+    private readonly FriendListButton friendListButton;
     public FriendListCleanup.Research.FriendMenuLogger MenuLogger { get; } = new();
     public FriendListCleanup.Research.ChangeWatcher ChangeWatcher { get; } = new();
     public FriendListCleanup.Research.PageSaver PageSaver { get; } = new();
@@ -56,6 +59,10 @@ public sealed class Plugin : IDalamudPlugin
         // Our verdict in the game's own right-click menu on the Friend List.
         friendContextMenu = new FriendContextMenu(this);
 
+        // A warning in the server info bar when the friend list is nearly full, and a button on the game's Friend List.
+        friendCountWarning = new FriendCountWarning(this);
+        friendListButton = new FriendListButton(this);
+
         // /flc is short and handy; /flcleanup is the fallback if another plugin already owns /flc.
         var help = new CommandInfo(OnCommand) { HelpMessage = "Open Friend List Cleanup. Add \"explore\" to see raw friend list data." };
         shortCommandRegistered = CommandManager.AddHandler(ShortCommand, help);
@@ -68,6 +75,7 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update += PassiveCheck;
 
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw += friendListButton.Draw;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
     }
@@ -76,11 +84,13 @@ public sealed class Plugin : IDalamudPlugin
     {
         Framework.Update -= PassiveCheck;
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= friendListButton.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
 
         windowSystem.RemoveAllWindows();
         friendContextMenu.Dispose();
+        friendCountWarning.Dispose();
         MenuLogger.Dispose();
         ChangeWatcher.Dispose();
         PageSaver.Dispose();
@@ -124,6 +134,13 @@ public sealed class Plugin : IDalamudPlugin
         mainWindow.Toggle();
     }
 
+    /// <summary>Opens the main window (doesn't close it if it's already open). Used by the shortcut buttons.</summary>
+    public void OpenMainUi()
+    {
+        RefreshFriendList();
+        mainWindow.IsOpen = true;
+    }
+
     public void ToggleConfigUi() => configWindow.Toggle();
 
     private DateTime nextPassiveCheckUtc = DateTime.MinValue;
@@ -131,6 +148,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private void PassiveCheck(IFramework framework)
     {
+        friendCountWarning.Update(); // cheap; it limits itself to once a second
+
         if (DateTime.UtcNow < nextPassiveCheckUtc)
             return;
         nextPassiveCheckUtc = DateTime.UtcNow.AddSeconds(30);

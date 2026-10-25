@@ -20,6 +20,10 @@ public class FriendRecord
     /// <summary>Shown in-game as "(Unable to Retrieve)": almost always a deleted character.</summary>
     public bool Unretrievable { get; set; }
 
+    // --- Yours ---
+    /// <summary>Starred by you: a friend you never want removed by accident. The plugin refuses to remove a starred friend.</summary>
+    public bool Starred { get; set; }
+
     // --- From the Lodestone ---
     /// <summary>The number in the friend's Lodestone URL. Saved so later scans skip the search step.</summary>
     public string? LodestoneId { get; set; }

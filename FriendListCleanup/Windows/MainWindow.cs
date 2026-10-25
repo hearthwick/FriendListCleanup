@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
@@ -18,6 +19,9 @@ public sealed class MainWindow : Window
     /// <summary>Which verdict the table is filtered to, or null for everyone.</summary>
     private Verdict? filter;
 
+    /// <summary>True when the table shows only starred friends.</summary>
+    private bool filterStarred;
+
     /// <summary>When we last re-read the friend list, so removals made in-game show up here within seconds.</summary>
     private DateTime lastRefresh = DateTime.MinValue;
 
@@ -29,7 +33,7 @@ public sealed class MainWindow : Window
         ulong ContentId, string Name, string World, string LodestoneUrl,
         int? TopJobLevel, int? JobsAtCap, DateTime? NewestUtc, bool AchievementsPublic, bool Checked,
         DateTime? FriendedUtc, DateTime? LastSeenOnlineUtc, string? LastSeenZone, DateTime? LastChangeUtc, DateTime? FingerprintFirstUtc, string? LastChangeSections,
-        Verdict Verdict, string Reason);
+        Verdict Verdict, string Reason, bool Starred);
 
     private static readonly Verdict[] SummaryOrder =
         [Verdict.Gone, Verdict.LikelyInactive, Verdict.PossiblyInactive, Verdict.CantTell, Verdict.NewFriend, Verdict.Active, Verdict.NotChecked];
@@ -56,6 +60,7 @@ public sealed class MainWindow : Window
     private void ResetView()
     {
         filter = null;
+        filterStarred = false;
         tableGeneration++;
     }
 
@@ -187,10 +192,11 @@ public sealed class MainWindow : Window
                     var (verdict, reason) = VerdictRules.Evaluate(r, now, cfg, ages);
                     return new Row(r.ContentId, r.Name, r.World, r.LodestoneUrl,
                         r.TopJobLevel, r.JobsAtCap, r.NewestAchievementUtc, r.AchievementsPublic, r.CheckedUtc is not null,
-                        r.FriendedUtc, r.LastSeenOnlineUtc, r.LastSeenZone, r.LastChangeUtc, r.FingerprintFirstUtc, r.LastChangeSections, verdict, reason);
+                        r.FriendedUtc, r.LastSeenOnlineUtc, r.LastSeenZone, r.LastChangeUtc, r.FingerprintFirstUtc, r.LastChangeSections, verdict, reason, r.Starred);
                 })
-                // Best removal candidates first, then oldest achievement first, then by name.
-                .OrderBy(r => r.Verdict)
+                // Best removal candidates first (starred friends last), then oldest achievement first, then by name.
+                .OrderBy(r => r.Starred)
+                .ThenBy(r => r.Verdict)
                 .ThenBy(r => r.NewestUtc ?? DateTime.MaxValue)
                 .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -202,7 +208,10 @@ public sealed class MainWindow : Window
         var counts = rows.GroupBy(r => r.Verdict).ToDictionary(g => g.Key, g => g.Count());
 
         if (ImGui.Button($"All ({rows.Count})"))
+        {
             filter = null;
+            filterStarred = false;
+        }
 
         foreach (var v in SummaryOrder)
         {
@@ -214,10 +223,45 @@ public sealed class MainWindow : Window
             using (ImRaii.PushColor(ImGuiCol.Button, ImGuiColors.DalamudGrey3, filter == v))
             {
                 if (ImGui.Button($"{VerdictRules.Label(v)} ({n})"))
+                {
                     filter = filter == v ? null : v;
+                    filterStarred = false;
+                }
+            }
+        }
+
+        var starred = rows.Count(r => r.Starred);
+        if (starred > 0)
+        {
+            ImGui.SameLine();
+            using (ImRaii.PushColor(ImGuiCol.Button, ImGuiColors.DalamudGrey3, filterStarred))
+            {
+                if (ImGui.Button($"Starred ({starred})"))
+                {
+                    filterStarred = !filterStarred;
+                    filter = null;
+                }
             }
         }
     }
+
+    /// <summary>Stars or unstars a friend and saves straight away.</summary>
+    private void ToggleStar(ulong contentId)
+    {
+        lock (plugin.Scanner.Gate)
+        {
+            if (!plugin.Configuration.Records.TryGetValue(contentId, out var record))
+                return;
+            record.Starred = !record.Starred;
+            plugin.Configuration.Save();
+        }
+    }
+
+    private static readonly string StarIcon = FontAwesomeIcon.Star.ToIconString();
+
+    /// <summary>Column titles; column 0 is the star, drawn with the icon font.</summary>
+    private static readonly string[] ColumnNames =
+        ["", "Friend", "World", "Top job", "Jobs at cap", "Newest achievement", "Friends since", "Seen online", "Profile change", "Verdict"];
 
     private void DrawTable(List<Row> rows)
     {
@@ -226,11 +270,12 @@ public sealed class MainWindow : Window
                                       ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Sortable |
                                       ImGuiTableFlags.NoSavedSettings;
 
-        using var table = ImRaii.Table($"##friends{tableGeneration}", 9, flags, ImGui.GetContentRegionAvail());
+        using var table = ImRaii.Table($"##friends{tableGeneration}", ColumnNames.Length, flags, ImGui.GetContentRegionAvail());
         if (!table)
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1); // keep the header visible while scrolling
+        ImGui.TableSetupColumn("Star", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize, ImGui.GetFrameHeight());
         ImGui.TableSetupColumn("Friend", ImGuiTableColumnFlags.None, 2.2f);
         ImGui.TableSetupColumn("World", ImGuiTableColumnFlags.None, 1.2f);
         ImGui.TableSetupColumn("Top job", ImGuiTableColumnFlags.None, 0.8f);
@@ -240,7 +285,26 @@ public sealed class MainWindow : Window
         ImGui.TableSetupColumn("Seen online", ImGuiTableColumnFlags.None, 1.2f);
         ImGui.TableSetupColumn("Profile change", ImGuiTableColumnFlags.None, 1.4f);
         ImGui.TableSetupColumn("Verdict", ImGuiTableColumnFlags.DefaultSort, 1.6f);
-        ImGui.TableHeadersRow();
+
+        // Header row drawn by hand so the star column can show the star icon (it's in the icon font).
+        ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
+        for (var column = 0; column < ColumnNames.Length; column++)
+        {
+            if (!ImGui.TableSetColumnIndex(column))
+                continue;
+
+            if (column == 0)
+            {
+                using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+                    ImGui.TableHeader(StarIcon);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Starred friends can't be removed by accident. Click to sort.");
+            }
+            else
+            {
+                ImGui.TableHeader(ColumnNames[column]);
+            }
+        }
 
         // Click a column header to sort by it; click again to reverse.
         rows = SortRows(rows);
@@ -249,8 +313,23 @@ public sealed class MainWindow : Window
         {
             if (filter is not null && row.Verdict != filter)
                 continue;
+            if (filterStarred && !row.Starred)
+                continue;
 
             ImGui.TableNextRow();
+
+            // Star: click to protect (or unprotect) this friend.
+            ImGui.TableNextColumn();
+            using (ImRaii.PushColor(ImGuiCol.Text, row.Starred ? ImGuiColors.DalamudYellow : ImGuiColors.DalamudGrey3 with { W = 0.35f }))
+            using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            {
+                if (ImGui.Selectable($"{StarIcon}##star{row.ContentId}"))
+                    ToggleStar(row.ContentId);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(row.Starred
+                    ? "Starred: protected from removal. Click to unstar."
+                    : "Click to star: protects this friend from being removed by accident.");
 
             // Friend name: click to open their Lodestone page in your browser.
             ImGui.TableNextColumn();
@@ -338,17 +417,18 @@ public sealed class MainWindow : Window
         var ascending = spec.SortDirection != ImGuiSortDirection.Descending;
         IOrderedEnumerable<Row> sorted = spec.ColumnIndex switch
         {
-            0 => rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase),
-            1 => rows.OrderBy(r => r.World, StringComparer.OrdinalIgnoreCase),
-            2 => rows.OrderBy(r => r.TopJobLevel ?? -1),
-            3 => rows.OrderBy(r => r.JobsAtCap ?? -1),
-            4 => rows.OrderBy(r => r.NewestUtc ?? DateTime.MaxValue),
-            5 => rows.OrderBy(r => r.FriendedUtc ?? DateTime.MaxValue),
-            6 => rows.OrderBy(r => r.LastSeenOnlineUtc ?? DateTime.MinValue),
-            7 => rows.OrderBy(r => r.LastChangeUtc ?? DateTime.MinValue),
-            // Default: best removal candidates first. Within a verdict: oldest achievement first,
+            0 => rows.OrderBy(r => !r.Starred), // starred first
+            1 => rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase),
+            2 => rows.OrderBy(r => r.World, StringComparer.OrdinalIgnoreCase),
+            3 => rows.OrderBy(r => r.TopJobLevel ?? -1),
+            4 => rows.OrderBy(r => r.JobsAtCap ?? -1),
+            5 => rows.OrderBy(r => r.NewestUtc ?? DateTime.MaxValue),
+            6 => rows.OrderBy(r => r.FriendedUtc ?? DateTime.MaxValue),
+            7 => rows.OrderBy(r => r.LastSeenOnlineUtc ?? DateTime.MinValue),
+            8 => rows.OrderBy(r => r.LastChangeUtc ?? DateTime.MinValue),
+            // Default: best removal candidates first, starred friends last. Within a verdict: oldest achievement first,
             // then the friends you added longest ago.
-            _ => rows.OrderBy(r => r.Verdict).ThenBy(r => r.NewestUtc ?? DateTime.MaxValue).ThenBy(r => r.FriendedUtc ?? DateTime.MaxValue),
+            _ => rows.OrderBy(r => r.Starred).ThenBy(r => r.Verdict).ThenBy(r => r.NewestUtc ?? DateTime.MaxValue).ThenBy(r => r.FriendedUtc ?? DateTime.MaxValue),
         };
 
         var result = sorted.ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
@@ -385,9 +465,11 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
         {
             var since = row.FriendedUtc is { } f ? $"\nFriends since {f.ToLocalTime():MMM d, yyyy}" : "";
-            ImGui.SetTooltip($"{row.Reason}{since}\n\n" +
-                             "Click: actions (remove, Lodestone page)\n" +
-                             "Ctrl+click: remove from your friend list right away, no confirmation");
+            ImGui.SetTooltip(row.Starred
+                ? $"{row.Reason}{since}\n\nStarred: protected from removal. Unstar them first to remove.\nClick: actions (unstar, Lodestone page)"
+                : $"{row.Reason}{since}\n\n" +
+                  "Click: actions (remove, star, Lodestone page)\n" +
+                  "Ctrl+click: remove from your friend list right away, no confirmation");
         }
 
         using var popup = ImRaii.Popup(popupId);
@@ -411,12 +493,17 @@ public sealed class MainWindow : Window
             return;
         }
 
-        using (ImRaii.Disabled(busy))
+        using (ImRaii.Disabled(busy || row.Starred))
         {
             // A button (not a menu item) so the menu stays open for the "are you sure?" step.
             if (ImGui.Button("Remove from Friend List…"))
                 confirmingRemove = row.ContentId;
         }
+        if (row.Starred)
+            ImGui.TextDisabled("Starred friends can't be removed.");
+
+        if (ImGui.Selectable(row.Starred ? "Unstar" : "Star (protect from removal)"))
+            ToggleStar(row.ContentId);
 
         if (row.LodestoneUrl.Length > 0 && ImGui.Selectable("Open Lodestone page"))
             Util.OpenLink(row.LodestoneUrl);

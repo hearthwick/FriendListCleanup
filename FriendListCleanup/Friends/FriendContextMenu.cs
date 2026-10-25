@@ -44,7 +44,9 @@ public sealed class FriendContextMenu : IDisposable
                 url = record.LodestoneUrl.Length > 0 ? record.LodestoneUrl : null;
             }
 
-            text = $"Cleanup: {VerdictRules.Label(result.verdict)} ({result.reason})";
+            text = record.Starred
+                ? $"Cleanup: Starred, protected ({VerdictRules.Label(result.verdict)})"
+                : $"Cleanup: {VerdictRules.Label(result.verdict)} ({result.reason})";
         }
 
         args.AddMenuItem(new MenuItem

@@ -54,6 +54,16 @@ public sealed unsafe class FriendRemover
         if (Busy)
             return;
 
+        // Starred friends are protected: refuse here too, not only in the window, so no path can remove them.
+        bool starred;
+        lock (scanner.Gate)
+            starred = config.Records.TryGetValue(contentId, out var record) && record.Starred;
+        if (starred)
+        {
+            SetStatus($"{name} is starred, so they can't be removed. Unstar them first if you really mean it.", true);
+            return;
+        }
+
         Busy = true;
         SetStatus($"Removing {name}…", false);
         Plugin.Framework.RunOnFrameworkThread(() => OpenMenu(contentId, name));
