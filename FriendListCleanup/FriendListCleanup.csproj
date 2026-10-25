@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <!-- Manifest fields shown in /xlplugins -->
+    <Author>Hearthwick</Author>
+    <Name>Friend List Cleanup</Name>
+    <Punchline>Find friends who have stopped playing, so you can make room on a full friend list.</Punchline>
+    <Description>Checks each friend's public Lodestone page and flags who has probably stopped playing, with the reason.
+Remove friends straight from the list when you agree. Open with /flc.</Description>
+    <Tags>friends;friend list;cleanup;social;lodestone</Tags>
+    <!-- Needed to read the friend list from game memory -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+</Project>
